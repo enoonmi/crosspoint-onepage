@@ -78,6 +78,12 @@ bool PathMap::localTempBookPath(const std::string& name, std::string& out) {
   return true;
 }
 
+bool PathMap::localBackupBookPath(const std::string& name, std::string& out) {
+  if (!isAcceptableBookName(name)) return false;
+  out = std::string(booksDir()) + "/." + name + ".old";
+  return true;
+}
+
 std::string PathMap::stripBaseUrl(const std::string& href) {
   // Look for "://" and take everything from the first '/' after the authority.
   const size_t schemeEnd = href.find("://");
