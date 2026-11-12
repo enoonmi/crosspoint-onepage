@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // ---------------- Arduino ----------------
 
@@ -175,6 +176,14 @@ class HalStorage {
  public:
   static HalStorage& getInstance();
   bool ready() const { return true; }
+  // Matches lib/hal/HalStorage.h. Returns an empty list on the host: there is no
+  // SD card, and a stub that invented file names would let a test believe a scan
+  // found something.
+  std::vector<String> listFiles(const char* path = "/", int maxFiles = 200) {
+    static_cast<void>(path);
+    static_cast<void>(maxFiles);
+    return {};
+  }
   bool exists(const char* path);
   bool remove(const char* path);
   bool rename(const char* oldPath, const char* newPath);
