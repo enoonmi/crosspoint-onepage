@@ -1,0 +1,113 @@
+name: Anx Sync (onepage build)
+
+# The upstream CI builds the default env (Xteink X4 / ESP32-C3) and only on
+# `master`. The OnePage port needs `-e onepage` and lives on `main`, so the
+# firmware for this board has never been built in CI. That is why lib/AnxSyncIo
+# and the two AnxSync UI activities were only ever compile-checked against MSVC
+# stubs on a developer machine.
+#
+# This workflow builds the firmware *as shipped for OnePage*, so what a stub
+# cannot catch gets caught here: real ESP-IDF headers, the RISC-V toolchain,
+# platform macros (ONEPAGE_C61), and link order.
+#
+# It also runs the host-side AnxSync tests under g++, which additionally proves
+# the pure-logic layer is not relying on an MSVC extension.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/AnxSync/**'
+      - 'lib/AnxSyncIo/**'
+      - 'src/activities/settings/AnxSync*.cpp'
+      - 'src/activities/settings/AnxSync*.h'
+      - 'src/activities/settings/SettingsActivity.cpp'
+      - 'src/activities/settings/SettingsActivity.h'
+      - 'lib/I18n/translations/english.yaml'
+      - 'tests/host/**'
+      - 'platformio.ini'
+      - '.github/workflows/onepage-build.yml'
+  pull_request:
+    paths:
+      - 'lib/AnxSync/**'
+      - 'lib/AnxSyncIo/**'
+      - 'src/activities/settings/AnxSync*'
+      - 'platformio.ini'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Pure-logic tests. The same 317 assertions that run locally under MSVC.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Compile AnxSync pure logic with g++
+        run: |
+          set -euo pipefail
+          mkdir -p build/anx
+          g++ -std=c++20 -Wall -Wextra -O2 \
+              -Ilib/AnxSync \
+              lib/AnxSync/*.cpp tests/host/test_*.cpp \
+              -o build/anx/anx_tests
+          ./build/anx/anx_tests
+
+  # The real target: does the OnePage firmware build?
+  build-onepage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        # Same pioarduino fork the upstream CI uses; it carries the ESP32-C61
+        # support this port depends on.
+        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-onepage-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-onepage-${{ runner.os }}-
+
+      - name: Build OnePage firmware
+        run: |
+          set -euo pipefail
+          pio run -e onepage | tee pio.log
+
+      # Sizes matter on a 16 MB part, and a regression here is invisible without
+      # printing it.
+      - name: Report firmware size
+        run: |
+          set -euo pipefail
+          ram="$(grep -E "RAM:\s" -m1 pio.log || true)"
+          flash="$(grep -E "Flash:\s" -m1 pio.log || true)"
+          {
+            echo "## OnePage firmware build"
+            if [ -n "$ram" ]; then echo "- ${ram}"; else echo "- RAM: not reported"; fi
+            if [ -n "$flash" ]; then echo "- ${flash}"; else echo "- Flash: not reported"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: firmware-onepage.bin
+          path: .pio/build/onepage/firmware.bin
+          if-no-files-found: error
