@@ -22,7 +22,8 @@
  * library. See docs/01-anx-webdav-protocol.md in the integration repo.
  *
  * NOT host-compiled: depends on esp_http_client and HalStorage. The parsing and
- * decision logic it calls (AnxPropfindParser, AnxSyncPlan) *is* host-tested.
+ * decision logic it calls (AnxPropfindParser, AnxSyncPlan) *is* host-tested, and
+ * buildUrl() is covered by the IO layer link check.
  */
 class AnxWebDavClient {
  public:
@@ -82,10 +83,19 @@ class AnxWebDavClient {
    */
   static Error putProgress(const std::string& json);
 
- private:
-  /** Build `baseUrl + "/" + relative`, percent-encoding each path segment. */
+  /**
+   * Build `baseUrl + "/" + relative`, percent-encoding each path segment but
+   * keeping the structural slashes.
+   *
+   * Public because it is the single place every request path is assembled, and a
+   * mistake here sends PROPFIND/GET/PUT to a 404 whose only symptom on the device
+   * is "sync failed". It is a pure function of the credential store, so exposing
+   * it costs nothing and lets the host link check cover the join, the encoding of
+   * a space, a '+', a '%' and a multi-byte UTF-8 book name.
+   */
   static std::string buildUrl(const std::string& relative);
 
+ private:
   /** Validate configuration and free heap before a TLS handshake. */
   static Error checkConfigured();
 };
