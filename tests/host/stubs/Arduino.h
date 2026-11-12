@@ -1,11 +1,12 @@
 // Minimal stand-ins for the Arduino / ESP-IDF / crosspoint headers that
 // lib/AnxSyncIo depends on.
 //
-// Purpose: let a plain MSVC build syntax-check and link AnxCredentialStore.cpp
-// and AnxWebDavClient.cpp on the host, so "written but never compiled" is not the
-// best we can do. This is NOT a faithful emulation of the ESP32: it does not
-// model real HTTP, real TLS, or the real SD card. It only provides enough of the
-// API surface to prove the code parses, type-checks, and has no missing symbols.
+// Purpose: let a plain MSVC build syntax-check and link AnxCredentialStore.cpp,
+// AnxWebDavClient.cpp and AnxProgressStore.cpp on the host, so "written but
+// never compiled" is not the best we can do. This is NOT a faithful emulation of
+// the ESP32: it does not model real HTTP, real TLS, or the real SD card. It only
+// provides enough of the API surface to prove the code parses, type-checks, and
+// has no missing symbols.
 //
 // Note the simulator/ directory in this repo already contains a much more
 // faithful esp_http_client shim backed by libcurl; this one is deliberately
@@ -151,6 +152,7 @@ class HalFile {
     static_cast<void>(buf);
     return count;
   }
+  void flush() {}
   bool close() { return true; }
   bool isOpen() const { return true; }
   operator bool() const { return true; }
@@ -171,8 +173,19 @@ class HalStorage {
   bool ensureDirectoryExists(const char* path);
   bool writeFile(const char* path, const String& content);
   String readFile(const char* path);
+
   bool openFileForWrite(const char* moduleName, const char* path, HalFile& file);
   bool openFileForRead(const char* moduleName, const char* path, HalFile& file);
+
+  // The real lib/hal/HalStorage.h also provides std::string overloads; the IO
+  // layer uses them, so the stub must match or the code would compile on device
+  // while failing here, which is the opposite of what a stub is for.
+  bool openFileForWrite(const char* moduleName, const std::string& path, HalFile& file) {
+    return openFileForWrite(moduleName, path.c_str(), file);
+  }
+  bool openFileForRead(const char* moduleName, const std::string& path, HalFile& file) {
+    return openFileForRead(moduleName, path.c_str(), file);
+  }
 };
 
 #define Storage HalStorage::getInstance()
