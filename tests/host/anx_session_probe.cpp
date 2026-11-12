@@ -25,7 +25,13 @@
 // ESP-IDF client are what the CI build covers.
 //
 // Usage:
-//   anx_session_probe --port N --user U --password P [--host H]
+//   anx_session_probe --port N --user U --password P [--host H] [--local SPEC]...
+//
+// --local SPEC declares a book the device already has, so the incremental path
+// can be exercised instead of only the fresh-device path. SPEC is
+// "name:size:mtime", e.g. "abc.epub:3286:1762900000". Pass the exact size and
+// mtime the server reports to get SyncAction::Skip; pass a different size to get
+// Replace.
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -54,7 +60,22 @@ struct Args {
   std::string user;
   std::string password;
   std::string host = "127.0.0.1";
+  std::vector<anx::LocalFile> local;
 };
+
+// Parse "name:size:mtime". The server's own numbers are what make a Skip, so the
+// caller is expected to pass exactly what PROPFIND reported.
+bool parseLocalSpec(const std::string& spec, anx::LocalFile& out) {
+  const size_t first = spec.find(':');
+  if (first == std::string::npos) return false;
+  const size_t second = spec.find(':', first + 1);
+  if (second == std::string::npos) return false;
+  out.name = spec.substr(0, first);
+  if (out.name.empty()) return false;
+  out.size = std::atoll(spec.c_str() + first + 1);
+  out.lastModified = std::atoll(spec.c_str() + second + 1);
+  return true;
+}
 
 void closeSocket(socket_t sock) {
 #ifdef _WIN32
@@ -176,6 +197,10 @@ bool parseArgs(int argc, char** argv, Args& args) {
       args.password = argv[++i];
     } else if (flag == "--host" && hasValue) {
       args.host = argv[++i];
+    } else if (flag == "--local" && hasValue) {
+      anx::LocalFile file;
+      if (!parseLocalSpec(argv[++i], file)) return false;
+      args.local.push_back(file);
     } else {
       return false;
     }
@@ -238,24 +263,33 @@ int main(int argc, char** argv) {
   }
   std::printf("  parsed %zu remote book entries\n", remote.size());
 
-  // --- 2. plan a download: no local books yet, so every remote book is new ---
-  std::vector<anx::LocalFile> local;  // empty: a fresh device
-  const anx::SyncPlan plan = anx::buildSyncPlan(remote, local);
+  // --- 2. plan against whatever the device already has ---
+  // With no --local specs this is a fresh device and every book is Download.
+  // With --local specs it exercises the incremental path: Skip when size and
+  // mtime match, Replace when they differ.
+  const anx::SyncPlan plan = anx::buildSyncPlan(remote, args.local);
   const int toDownload = plan.countOf(anx::SyncAction::Download);
+  const int toReplace = plan.countOf(anx::SyncAction::Replace);
   const int toSkip = plan.countOf(anx::SyncAction::Skip);
   // Rejected names are collected in plan.ignored, not as SyncAction::Ignore
   // items - countOf(Ignore) is always 0 for them. Counting the vector is what
   // reports the real number.
   const int ignored = static_cast<int>(plan.ignored.size());
-  std::printf("  plan: %d to download, %d to skip, %d ignored\n", toDownload, toSkip, ignored);
+  // Books the device has that the server no longer does. Reported, never deleted.
+  const int localOnly = static_cast<int>(plan.localOnly.size());
+  std::printf("  plan: %d download, %d replace, %d skip, %d ignored, %d local-only\n",
+              toDownload, toReplace, toSkip, ignored, localOnly);
 
-  if (toDownload == 0) {
+  if (args.local.empty() && toDownload == 0) {
     fail("plan produced no downloads for a fresh device with remote books");
   }
 
+  // Download and Replace both mean "fetch this".
   std::vector<anx::SyncPlanItem> downloads;
   for (const auto& item : plan.items) {
-    if (item.action == anx::SyncAction::Download) downloads.push_back(item);
+    if (item.action == anx::SyncAction::Download || item.action == anx::SyncAction::Replace) {
+      downloads.push_back(item);
+    }
   }
 
   // --- 3. download each planned book and verify the byte count ---
