@@ -22,10 +22,11 @@
 // ProgressFile::writeAtomic, so this class reuses both rather than reimplementing
 // the format. Getting that format wrong would silently corrupt the saved position.
 //
-// The scan below also needs Epub: turning (spine, page) into a book-wide
-// percentage requires the cumulative spine sizes, which progress.bin does not
-// store. That is why this class now depends on Epub and why tests/host/stubs has
-// an Epub.h.
+// Both directions of the progress sync live here:
+//   scanReaderPositions()  progress.bin -> journal -> upload
+//   applyPhonePositions()  phone document -> progress.bin
+// Both need Epub for the cumulative spine sizes; progress.bin stores a position,
+// not a percentage, so the translation cannot be done without them.
 
 namespace {
 
@@ -358,4 +359,79 @@ int AnxProgressStore::mergeFromPhone(const anx::ProgressDocument& phone) {
     ++changed;
   }
   return changed;
+}
+
+int AnxProgressStore::applyPhonePositions(const anx::ProgressDocument& phone) {
+  if (!Storage.ready()) return 0;
+  if (phone.books.empty()) return 0;
+
+  static constexpr const char* kCacheDir = "/.crosspoint";
+  int rewritten = 0;
+
+  for (const anx::BookProgress& entry : phone.books) {
+    // file_path is "file/<name>"; the SD card has it at /Books/<name>. Stripping
+    // the prefix is all that is needed - localBookPath rebuilds the rest, and the
+    // name rules below reject anything that is not a book.
+    static constexpr const char* kAnxPrefix = "file/";
+    if (entry.filePath.rfind(kAnxPrefix, 0) != 0) continue;
+    const std::string bookName = entry.filePath.substr(std::strlen(kAnxPrefix));
+    if (!anx::PathMap::isAcceptableBookName(bookName)) continue;
+
+    std::string bookPath;
+    if (!anx::PathMap::localBookPath(bookName, bookPath)) continue;
+    if (!Storage.exists(bookPath.c_str())) continue;  // book not on this device
+
+    const std::string cachePath =
+        std::string(kCacheDir) + "/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
+
+    // The spine table is needed to turn a book-wide percentage back into a
+    // (spine, page) pair, exactly as scanReaderPositions() needs it the other way.
+    Epub epub(bookPath, kCacheDir);
+    if (!epub.load(/*buildIfMissing=*/false, /*skipLoadingCss=*/true)) {
+      LOG_ERR("AnxSync", "cannot open %s to apply phone progress", bookName.c_str());
+      continue;
+    }
+    const int spineCount = epub.getSpineItemsCount();
+    if (spineCount <= 0) continue;
+
+    std::vector<uint32_t> cumulative;
+    cumulative.reserve(static_cast<size_t>(spineCount));
+    for (int i = 0; i < spineCount; ++i) {
+      cumulative.push_back(static_cast<uint32_t>(epub.getCumulativeSpineItemSize(i)));
+    }
+
+    // pageCount for the target spine is unknown without laying the text out, and
+    // laying it out here would duplicate the reader's pagination. Passing an empty
+    // table makes the locator assume one page per spine item, which resolves to a
+    // valid page number; the reader re-paginates on open and clamps the page.
+    const std::vector<int> pagesPerSpine;
+    const anx::ProgressBridge::DevicePosition target =
+        anx::ProgressBridge::percentageToPosition(cumulative, entry.percentage, pagesPerSpine);
+
+    // Skip when the stored position already matches, so a no-op sync does not
+    // rewrite the card (and does not wear it).
+    int existingSpine = 0;
+    int existingPage = 0;
+    int existingCount = 0;
+    if (readReaderPosition(cachePath, existingSpine, existingPage, existingCount)) {
+      if (existingSpine == target.spineIndex && existingPage == target.pageNumber) continue;
+    }
+
+    uint8_t data[6];
+    data[0] = static_cast<uint8_t>(target.spineIndex & 0xFF);
+    data[1] = static_cast<uint8_t>((target.spineIndex >> 8) & 0xFF);
+    data[2] = static_cast<uint8_t>(target.pageNumber & 0xFF);
+    data[3] = static_cast<uint8_t>((target.pageNumber >> 8) & 0xFF);
+    data[4] = static_cast<uint8_t>(target.totalPages & 0xFF);
+    data[5] = static_cast<uint8_t>((target.totalPages >> 8) & 0xFF);
+
+    if (!ProgressFile::writeAtomic(cachePath, data, sizeof(data))) {
+      LOG_ERR("AnxSync", "cannot write progress.bin for %s", bookName.c_str());
+      continue;
+    }
+    ++rewritten;
+  }
+
+  if (rewritten > 0) LOG_DBG("AnxSync", "applied phone progress to %d book(s)", rewritten);
+  return rewritten;
 }
