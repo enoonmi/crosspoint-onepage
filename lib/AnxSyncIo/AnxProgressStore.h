@@ -69,6 +69,26 @@ class AnxProgressStore {
    */
   bool readReaderPosition(const std::string& cachePath, int& spineIndex, int& pageNumber, int& totalPages) const;
 
+  /**
+   * Walk /Books, read each book's saved reader position, and record it.
+   *
+   * This is the step that makes the device -> phone direction work at all. The
+   * reader writes `/<cacheDir>/epub_<hash>/progress.bin`; nothing else on the
+   * device knows which book a given progress.bin belongs to, because the file
+   * stores only spine/page/pageCount. So the mapping is rebuilt here: for each
+   * book path, the same cache key the reader uses
+   * (`cacheDir + "/epub_" + std::hash<std::string>{}(bookPath)`) is derived, and
+   * that directory's progress.bin is read.
+   *
+   * Without a call to this, the journal stays empty, buildUpload() returns an
+   * empty document, and the upload phase silently does nothing - the progress
+   * direction only ever runs phone -> device.
+   *
+   * @param now  timestamp stamped on entries whose position actually moved
+   * @return how many entries changed, i.e. what the next upload will send
+   */
+  int scanReaderPositions(int64_t now);
+
   /** Build the upload payload from the journal. */
   anx::ProgressDocument buildUpload(const anx::ProgressDocument& phone, const std::string& deviceName,
                                     int64_t now) const;
