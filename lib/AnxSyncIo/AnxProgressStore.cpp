@@ -6,7 +6,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <vector>
 
+#include <Epub.h>
+
+#include "AnxPathMap.h"
 #include "ProgressFile.h"
 
 // NOTE: not host-compiled - depends on HalStorage and the reader's ProgressFile.
@@ -16,6 +21,11 @@
 // is documented in src/activities/reader/EpubReaderUtils.h and written through
 // ProgressFile::writeAtomic, so this class reuses both rather than reimplementing
 // the format. Getting that format wrong would silently corrupt the saved position.
+//
+// The scan below also needs Epub: turning (spine, page) into a book-wide
+// percentage requires the cumulative spine sizes, which progress.bin does not
+// store. That is why this class now depends on Epub and why tests/host/stubs has
+// an Epub.h.
 
 namespace {
 
@@ -244,6 +254,70 @@ bool AnxProgressStore::load() {
 
   LOG_DBG("AnxSync", "journal loaded (%u entries)", static_cast<unsigned>(journal.size()));
   return true;
+}
+
+int AnxProgressStore::scanReaderPositions(int64_t now) {
+  if (!Storage.ready()) return 0;
+
+  // The cache directory the reader uses. Epub builds its per-book path as
+  // cacheDir + "/epub_" + std::hash<std::string>{}(filepath), so the mapping from
+  // a book to its progress.bin exists only in that hash. Rebuilding it here with
+  // the same expression is what makes the progress direction work at all: nothing
+  // in progress.bin says which book it belongs to.
+  static constexpr const char* kCacheDir = "/.crosspoint";
+
+  const auto names = Storage.listFiles(anx::PathMap::booksDir(), 500);
+  int changed = 0;
+
+  for (const auto& name : names) {
+    const std::string bookName(name.c_str());
+    if (!anx::PathMap::isAcceptableBookName(bookName)) continue;
+
+    std::string bookPath;
+    if (!anx::PathMap::localBookPath(bookName, bookPath)) continue;
+
+    const std::string cachePath =
+        std::string(kCacheDir) + "/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
+
+    int spineIndex = 0;
+    int pageNumber = 0;
+    int totalPages = 0;
+    if (!readReaderPosition(cachePath, spineIndex, pageNumber, totalPages)) {
+      // Never opened in the reader, or the position was cleared. Not an error.
+      continue;
+    }
+    if (totalPages <= 0) continue;
+
+    // The percentage is book-wide, so the spine table is needed. Opening the EPUB
+    // costs a metadata read (not the whole file), and a book the reader has
+    // touched has already been parsed once, so its cache is warm. A book that
+    // fails to open is skipped rather than aborting the sync: one unreadable
+    // file must not stop the progress of every other book.
+    Epub epub(bookPath, kCacheDir);
+    if (!epub.load(/*buildIfMissing=*/false, /*skipLoadingCss=*/true)) {
+      LOG_ERR("AnxSync", "cannot open %s for progress mapping", bookName.c_str());
+      continue;
+    }
+
+    const int spineCount = epub.getSpineItemsCount();
+    if (spineIndex < 0 || spineIndex >= spineCount) continue;
+
+    std::vector<uint32_t> cumulative;
+    cumulative.reserve(static_cast<size_t>(spineCount));
+    for (int i = 0; i < spineCount; ++i) {
+      cumulative.push_back(static_cast<uint32_t>(epub.getCumulativeSpineItemSize(i)));
+    }
+
+    const anx::ProgressBridge::DevicePosition position{spineIndex, pageNumber, totalPages};
+    const double percentage = anx::ProgressBridge::positionToPercentage(cumulative, position);
+
+    // record() only reports a change when the position actually moved, so a book
+    // nobody read this session does not mark itself as modified.
+    if (record("file/" + bookName, percentage, now)) ++changed;
+  }
+
+  LOG_DBG("AnxSync", "scanned positions: %d changed", changed);
+  return changed;
 }
 
 anx::ProgressDocument AnxProgressStore::buildUpload(const anx::ProgressDocument& phone,
