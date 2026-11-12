@@ -8,6 +8,7 @@ void runPathAndPlanTests();
 void runProgressJsonTests();
 void runProgressLocatorTests();
 void runProgressBridgeTests();
+void runScanMetadataTests();
 
 int main() {
   std::printf("AnxSync host tests (pure logic, no Arduino dependency)\n\n");
@@ -17,5 +18,6 @@ int main() {
   runProgressJsonTests();
   runProgressLocatorTests();
   runProgressBridgeTests();
+  runScanMetadataTests();
   return anxtest::summary();
 }
