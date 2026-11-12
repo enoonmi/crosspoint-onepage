@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <WiFi.h>
 
+#include <ctime>
 #include <memory>
 
 #include "AnxCredentialStore.h"
@@ -188,6 +189,18 @@ void AnxSyncActivity::step() {
       // nothing a later sync cannot resend.
       anx::AnxProgressStore& progressStore = anx::AnxProgressStore::getInstance();
       progressStore.load();
+
+      // Read the reader's saved positions into the journal. Without this the
+      // journal is always empty, buildUpload() returns an empty document, and the
+      // upload below silently does nothing - the progress direction would only
+      // ever run phone -> device. This is the step that fills it.
+      const int moved = progressStore.scanReaderPositions(static_cast<int64_t>(time(nullptr)));
+      if (moved > 0) {
+        // Persist before uploading: if the PUT fails the position is still safe
+        // across a reboot and the next sync resends it.
+        progressStore.save();
+        LOG_DBG("AnxSync", "%d position(s) moved this session", moved);
+      }
 
       anx::ProgressDocument phoneDoc;
       // Reading the phone's document would need a GET plus a JSON parse; the
