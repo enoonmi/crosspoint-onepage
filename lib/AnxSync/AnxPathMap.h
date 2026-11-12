@@ -57,6 +57,18 @@ class PathMap {
   static bool localTempBookPath(const std::string& name, std::string& out);
 
   /**
+   * Map a remote book file name to the path that holds the previous copy while a
+   * replacement is being put in place.
+   *
+   * SdFat's rename() does not overwrite, so an existing file has to be moved out
+   * of the way first. Deleting it instead would open a window where a failed
+   * rename loses the book entirely; moving it to this name keeps a copy that can
+   * be restored. The suffix is not `.epub`, so the name rules reject it and it can
+   * never be mistaken for a book.
+   */
+  static bool localBackupBookPath(const std::string& name, std::string& out);
+
+  /**
    * Strip a leading WebDAV base URL (scheme://host/prefix) from an href.
    *
    * Some servers return absolute hrefs ("https://cloud.example.com/dav/anx/...")
