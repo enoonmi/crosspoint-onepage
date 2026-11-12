@@ -24,6 +24,7 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   BlePageTurner,
+  AnxSync,
 };
 
 struct SettingInfo {
