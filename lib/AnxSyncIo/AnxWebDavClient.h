@@ -11,10 +11,11 @@
 /**
  * WebDAV client for Anx Reader's `anx/` layout.
  *
- * Scope: the three operations this feature needs.
+ * Scope: the operations this feature needs.
  *   - `listBooks()`     PROPFIND anx/data/file/ (Depth: 1) -> remote catalogue
  *   - `downloadBook()`  GET a book, streaming to the SD card
- *   - `putProgress()`   PUT anx/onepage/progress.json
+ *   - `getProgress()`   GET  anx/onepage/progress.json
+ *   - `putProgress()`   PUT  anx/onepage/progress.json
  *
  * It never PUTs anything under anx/data/, and never touches anx/database*.db:
  * Anx Reader treats its database as the whole world and deletes remote book
@@ -82,6 +83,18 @@ class AnxWebDavClient {
    * does not mistake it for a database.
    */
   static Error putProgress(const std::string& json);
+
+  /**
+   * Download `anx/onepage/progress.json` into `out`.
+   *
+   * Returns NOT_FOUND when the file does not exist yet, which is the normal state
+   * on a first sync and must not be treated as an error by the caller.
+   *
+   * Without this the phone -> device direction has no way to read the document at
+   * all: the client could only write it, so a book's position could travel to the
+   * phone but never come back.
+   */
+  static Error getProgress(std::string& out);
 
   /**
    * Build `baseUrl + "/" + relative`, percent-encoding each path segment but
