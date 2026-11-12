@@ -452,3 +452,47 @@ AnxWebDavClient::Error AnxWebDavClient::putProgress(const std::string& json) {
   if (lastHttpCode == 200 || lastHttpCode == 201 || lastHttpCode == 204) return OK;
   return SERVER_ERROR;
 }
+
+AnxWebDavClient::Error AnxWebDavClient::getProgress(std::string& out) {
+  out.clear();
+  lastHttpCode = 0;
+
+  const Error configured = checkConfigured();
+  if (configured != OK) return configured;
+
+  const std::string url = buildUrl(anx::PathMap::remoteProgressPath());
+  LOG_DBG("AnxSync", "GET %s", url.c_str());
+
+  // The document is tiny (a few hundred bytes for a whole library), so the
+  // event-handler buffer path used by PROPFIND is the right shape here: it caps
+  // the response and grows only as needed.
+  ResponseBuffer buf;
+  esp_http_client_handle_t client = createClient(url, &buf, HTTP_METHOD_GET);
+  if (client == nullptr) return NETWORK_ERROR;
+
+  esp_err_t err = esp_http_client_open(client, 0);
+  if (err == ESP_OK) {
+    esp_http_client_fetch_headers(client);
+    lastHttpCode = esp_http_client_get_status_code(client);
+    while (esp_http_client_read_response(client, nullptr, 0) > 0) {
+      // drain into the event buffer
+    }
+  } else {
+    lastHttpCode = esp_http_client_get_status_code(client);
+  }
+  esp_http_client_cleanup(client);
+
+  LOG_DBG("AnxSync", "GET progress status=%d err=%d body=%u bytes", lastHttpCode, static_cast<int>(err),
+          static_cast<unsigned>(buf.len));
+
+  if (err != ESP_OK) return NETWORK_ERROR;
+  if (lastHttpCode == 401 || lastHttpCode == 403) return AUTH_FAILED;
+  // No document yet is the normal first-sync state, not a failure: the caller
+  // treats it as "the phone has nothing to contribute".
+  if (lastHttpCode == 404) return NOT_FOUND;
+  if (lastHttpCode != 200) return SERVER_ERROR;
+  if (buf.data == nullptr || buf.len == 0) return PARSE_ERROR;
+
+  out.assign(buf.data, buf.len);
+  return OK;
+}
