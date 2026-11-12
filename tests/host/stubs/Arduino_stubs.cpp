@@ -7,6 +7,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
+
+#include "Epub.h"
 
 EspStub ESP;
 
@@ -144,4 +147,27 @@ int64_t esp_http_client_get_content_length(esp_http_client_handle_t client) {
 esp_err_t esp_http_client_cleanup(esp_http_client_handle_t client) {
   delete static_cast<FakeClient*>(client);
   return ESP_OK;
+}
+
+// ---------------- Epub ----------------
+
+// See stubs/Epub.h: load() fails on purpose so a host run cannot look like a
+// successful position scan. The cache path mirrors the real constructor so the
+// string this stub produces would match, which keeps the code under test honest
+// about the path it builds.
+Epub::Epub(std::string path, const std::string& cacheDir) : filepath(std::move(path)) {
+  cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(filepath));
+}
+
+bool Epub::load(bool buildIfMissing, bool skipLoadingCss) {
+  static_cast<void>(buildIfMissing);
+  static_cast<void>(skipLoadingCss);
+  return false;
+}
+
+int Epub::getSpineItemsCount() const { return 0; }
+
+size_t Epub::getCumulativeSpineItemSize(int spineIndex) const {
+  static_cast<void>(spineIndex);
+  return 0;
 }
