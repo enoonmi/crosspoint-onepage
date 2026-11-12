@@ -202,11 +202,46 @@ void AnxSyncActivity::step() {
         LOG_DBG("AnxSync", "%d position(s) moved this session", moved);
       }
 
+      // ---- phone -> device ----
+      // Pull the phone's document and apply it. This is the direction that was
+      // missing entirely: the client could only PUT, so a position could travel to
+      // the phone but never come back, and the device kept reopening the book
+      // wherever it was last left on the device itself.
       anx::ProgressDocument phoneDoc;
-      // Reading the phone's document would need a GET plus a JSON parse; the
-      // upload path only needs to know what the device has, so an empty document
-      // means "send everything this device knows". Over-reporting is harmless
-      // because the merge on the phone side is timestamp-guarded.
+      {
+        std::string phoneJson;
+        const anx::AnxWebDavClient::Error getErr = anx::AnxWebDavClient::getProgress(phoneJson);
+        if (getErr == anx::AnxWebDavClient::OK) {
+          anx::ProgressDocument parsed;
+          if (anx::ProgressJson::parse(phoneJson, parsed)) {
+            phoneDoc = parsed;
+          } else {
+            // A malformed document must not stop the upload below: the device's
+            // own positions are still worth sending.
+            LOG_ERR("AnxSync", "phone progress.json did not parse");
+          }
+        } else if (getErr != anx::AnxWebDavClient::NOT_FOUND) {
+          // NOT_FOUND is the normal first-sync state; anything else is worth
+          // reporting but still not fatal for the upload.
+          LOG_ERR("AnxSync", "could not fetch phone progress: %s",
+                  anx::AnxWebDavClient::errorString(getErr));
+        }
+      }
+
+      if (!phoneDoc.books.empty()) {
+        // Merge into the journal first so a book the device is ahead on is not
+        // dragged backwards, then write the winners into progress.bin.
+        const int adopted = progressStore.mergeFromPhone(phoneDoc);
+        if (adopted > 0) progressStore.save();
+        const int applied = progressStore.applyPhonePositions(phoneDoc);
+        if (applied > 0) LOG_DBG("AnxSync", "adopted %d, rewrote %d progress file(s)", adopted, applied);
+      }
+
+      // Build the upload against the document just fetched, so entries the phone
+      // already has are carried through rather than dropped from the file. When
+      // the fetch failed this is the empty document, which means "send everything
+      // this device knows" - the merge on the phone side is timestamp-guarded, so
+      // over-reporting is harmless.
       const anx::ProgressDocument upload =
           progressStore.buildUpload(phoneDoc, anx::ProgressJson::defaultDeviceName(), 0);
 
