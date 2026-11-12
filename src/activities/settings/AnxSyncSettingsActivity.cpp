@@ -37,6 +37,7 @@ void AnxSyncSettingsActivity::onEnter() {
   selectedIndex = 0;
   showSaved = false;
   showSaveError = false;
+  errorLine.clear();
   ensureLoaded();
   requestUpdate();
 }
@@ -55,7 +56,10 @@ void AnxSyncSettingsActivity::save() {
   showSaved = AnxCredentialStore::getInstance().saveToFile();
   showSaveError = !showSaved;
   if (!showSaved) {
+    errorLine = tr(STR_ERROR_GENERAL_FAILURE);
     LOG_ERR("AnxSync", "failed to persist settings");
+  } else {
+    errorLine.clear();
   }
 }
 
@@ -74,6 +78,7 @@ void AnxSyncSettingsActivity::loop() {
     selectedIndex = (selectedIndex + 1) % kRowCount;
     showSaved = false;
     showSaveError = false;
+    errorLine.clear();
     requestUpdate();
   });
 
@@ -81,6 +86,7 @@ void AnxSyncSettingsActivity::loop() {
     selectedIndex = (selectedIndex + kRowCount - 1) % kRowCount;
     showSaved = false;
     showSaveError = false;
+    errorLine.clear();
     requestUpdate();
   });
 }
@@ -126,12 +132,22 @@ void AnxSyncSettingsActivity::handleSelection() {
     auto handler = [this](const ActivityResult& result) {
       if (result.isCancelled) return;
       const auto& kb = std::get<KeyboardResult>(result.data);
-      AnxCredentialStore::getInstance().setPassword(kb.text);
+      // An empty entry means "leave the stored password alone". Without this a
+      // user who opens the field and confirms without typing would erase a
+      // working password - on an e-ink keyboard that is a silently broken sync.
+      if (!kb.text.empty()) {
+        AnxCredentialStore::getInstance().setPassword(kb.text);
+      }
       save();
       requestUpdate();
     };
+    // The stored password is deliberately not passed as the prefill. It would be
+    // rendered into the keyboard buffer, and although InputType::Password hides it
+    // behind a toggle, one accidental toggle on a shared device shows the secret.
+    // The row already reports whether a password is set ("******" vs "not set"),
+    // which is everything the user needs to decide whether to retype it.
     startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PASSWORD),
-                                                                   store.getPassword(), 63, InputType::Password),
+                                                                   std::string(), 63, InputType::Password),
                            handler);
     return;
   }
@@ -152,8 +168,12 @@ void AnxSyncSettingsActivity::handleSelection() {
 
   if (selectedIndex == kSyncNow) {
     // Refuse early with a specific message rather than letting the sync screen
-    // fail after the user has waited for a TLS handshake.
+    // fail after the user has waited for a TLS handshake. The popup carries the
+    // reason, so it reuses the same string the sync screen would have shown;
+    // showSaveError is only the trigger for "show a popup", not a claim that a
+    // save failed.
     if (!store.isConfigured()) {
+      errorLine = tr(STR_ANX_SYNC_NO_SERVER);
       showSaveError = true;
       requestUpdate();
       return;
@@ -203,8 +223,10 @@ void AnxSyncSettingsActivity::render(RenderLock&&) {
             return store.getUsername().empty() ? std::string(tr(STR_NOT_SET)) : store.getUsername();
           case kPassword:
             return store.getPassword().empty() ? std::string(tr(STR_NOT_SET)) : std::string("******");
-          case kWifiOnly: return store.getOnlySyncOnWifi() ? std::string("On") : std::string("Off");
-          case kOnWake: return store.getAutoSyncOnWake() ? std::string("On") : std::string("Off");
+          case kWifiOnly:
+            return store.getOnlySyncOnWifi() ? std::string(tr(STR_STATE_ON)) : std::string(tr(STR_STATE_OFF));
+          case kOnWake:
+            return store.getAutoSyncOnWake() ? std::string(tr(STR_STATE_ON)) : std::string(tr(STR_STATE_OFF));
           case kSyncNow: return std::string();
           default: return std::string();
         }
@@ -215,7 +237,7 @@ void AnxSyncSettingsActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   if (showSaveError) {
-    GUI.drawPopup(renderer, tr(STR_ERROR_GENERAL_FAILURE));
+    GUI.drawPopup(renderer, errorLine.empty() ? tr(STR_ERROR_GENERAL_FAILURE) : errorLine.c_str());
   } else if (showSaved) {
     GUI.drawPopup(renderer, tr(STR_ANX_SYNC_DONE));
   }
