@@ -13,17 +13,19 @@
  * Responsibilities:
  *   - read the per-book position the reader saved in
  *     `.crosspoint/epub_<hash>/progress.bin`
+ *   - write a merged position back into that same file
  *   - keep a sync-side journal so a book that was read but not uploaded yet is
  *     not lost across a reboot
  *   - turn the journal plus the phone's document into the upload payload, and
  *     apply phone-side updates back onto the journal
  *
- * Deliberately NOT responsible for writing `progress.bin` itself: that file
- * belongs to the reader activities (`EpubReaderUtils::saveProgress`), and having
- * two writers would risk corrupting it. This class only reads it, and keeps its
- * own journal at `/.crosspoint/anx_progress.bin`.
+ * Deliberately NOT responsible for writing `progress.bin` as part of reading:
+ * that file belongs to the reader activities (`EpubReaderUtils::saveProgress`),
+ * and having two writers would risk corrupting it. This class reads it during a
+ * scan, and writes it only through the same crash-safe
+ * `ProgressFile::writeAtomic` the reader uses, when the phone's position wins.
  *
- * NOT host-tested: depends on HalStorage. It IS compile-checked against
+ * NOT host-tested: depends on HalStorage and Epub. It IS compile-checked against
  * tests/host/stubs by tests/host/check_io_layer.py. The translation logic it
  * delegates to (ProgressBridge, ProgressLocator) is host-tested.
  */
@@ -88,6 +90,22 @@ class AnxProgressStore {
    * @return how many entries changed, i.e. what the next upload will send
    */
   int scanReaderPositions(int64_t now);
+
+  /**
+   * Write the phone's winning positions back into the reader's progress.bin files.
+   *
+   * This is the last missing link in the phone -> device direction. Merge the
+   * document into the journal, then call this: for every book the phone has, the
+   * percentage is converted back to (spine, page) and written with
+   * ProgressFile::writeAtomic, which the reader itself uses.
+   *
+   * Books missing locally are skipped, as is a book whose stored position already
+   * matches, so a sync that changes nothing does not rewrite the card.
+   *
+   * @param phone  the phone's document
+   * @return how many progress.bin files were rewritten
+   */
+  int applyPhonePositions(const anx::ProgressDocument& phone);
 
   /** Build the upload payload from the journal. */
   anx::ProgressDocument buildUpload(const anx::ProgressDocument& phone, const std::string& deviceName,
