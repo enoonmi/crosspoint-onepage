@@ -38,19 +38,50 @@ class String {
   friend String operator+(const String& a, const String& b) { return String(a.value + b.value); }
   friend String operator+(const char* a, const String& b) { return String(std::string(a) + b.value); }
   bool operator==(const String& other) const { return value == other.value; }
+  operator const char*() const { return value.c_str(); }
+  const std::string& str() const { return value; }
 
  private:
   std::string value;
 };
 
-// ---------------- ESP-IDF bits ----------------
-
 struct EspStub {
   uint32_t getFreeHeap() const { return 200000; }
 };
 
+extern EspStub ESP;
+
+// ---------------- base64 ----------------
+
+namespace base64 {
+inline String encode(const char* input) {
+  // The real encoder produces the Authorization header. This stub only needs to
+  // return something well-typed so the code type-checks.
+  static_cast<void>(input);
+  return String("c3R1Yg==");
+}
+}  // namespace base64
+
+// ---------------- esp_http_client ----------------
+
+enum esp_http_client_method_t {
+  HTTP_METHOD_GET = 0,
+  HTTP_METHOD_POST,
+  HTTP_METHOD_PUT,
+  HTTP_METHOD_DELETE,
+  HTTP_METHOD_PROPFIND,
+  HTTP_METHOD_MKCOL,
+};
+
+enum esp_http_client_event_id_t {
+  HTTP_EVENT_ERROR = 0,
+  HTTP_EVENT_ON_CONNECTED,
+  HTTP_EVENT_ON_DATA,
+  HTTP_EVENT_ON_FINISH,
+};
+
 struct esp_http_client_event_t {
-  int event_id;
+  esp_http_client_event_id_t event_id;
   void* user_data;
   void* data;
   int data_len;
@@ -58,23 +89,22 @@ struct esp_http_client_event_t {
 
 typedef int esp_err_t;
 static constexpr int ESP_OK = 0;
-static constexpr int HTTP_EVENT_ON_DATA = 1;
+static constexpr int ESP_FAIL = -1;
 
 struct esp_http_client_config_t {
   const char* url = nullptr;
-  const char* method = nullptr;
-  const char* username = nullptr;
-  const char* password = nullptr;
-  int auth_type = 0;
-  bool skip_cert_common_name_check = false;
+  esp_http_client_method_t method = HTTP_METHOD_GET;
+  int timeout_ms = 0;
+  int buffer_size = 0;
+  int buffer_size_tx = 0;
+  bool keep_alive_enable = false;
   void* crt_bundle_attach = nullptr;
-  void (*event_handler)(esp_http_client_event_t*) = nullptr;
+  esp_err_t (*event_handler)(esp_http_client_event_t*) = nullptr;
   void* user_data = nullptr;
-  int timeout_ms = 5000;
-  bool disable_auto_redirect = false;
 };
 
 typedef void* esp_http_client_handle_t;
+
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t* config);
 esp_err_t esp_http_client_set_header(esp_http_client_handle_t client, const char* key, const char* value);
 esp_err_t esp_http_client_open(esp_http_client_handle_t client, int content_length);
@@ -86,11 +116,9 @@ int esp_http_client_get_status_code(esp_http_client_handle_t client);
 int64_t esp_http_client_get_content_length(esp_http_client_handle_t client);
 esp_err_t esp_http_client_cleanup(esp_http_client_handle_t client);
 
-// The stub implementations deliberately fail every network call: a host run must
-// never look like a successful sync. See Arduino_stubs.cpp.
-static esp_err_t stubFail(const char* what) {
-  static_cast<void>(what);
-  return -1;
+inline esp_err_t esp_crt_bundle_attach(void* conf) {
+  static_cast<void>(conf);
+  return ESP_OK;
 }
 
 // ---------------- logging ----------------
@@ -120,9 +148,9 @@ class HalFile {
     static_cast<void>(count);
     return 0;
   }
-  // The real HalFile also has the single-byte form and the Print override.
-  // Neither is used by AnxSyncIo today, but omitting them made the stub a
-  // narrower contract than the header it stands in for.
+  // The real HalFile also declares the single-byte forms. AnxSyncIo does not use
+  // them today, but a stub narrower than its header hides the next call that
+  // would fail on device.
   int read() { return -1; }
   size_t write(const void* buf, size_t count) {
     static_cast<void>(buf);
@@ -166,11 +194,10 @@ class HalStorage {
   bool openFileForRead(const char* moduleName, const std::string& path, HalFile& file) {
     return openFileForRead(moduleName, path.c_str(), file);
   }
-  // The real HalStorage declares three overloads each: const char*, std::string
-  // and Arduino String. The String ones matter: Arduino's String has no implicit
-  // conversion to std::string, so code that passes a String compiles here only if
-  // this overload exists. Leaving them out made the stub *more permissive* than
-  // the real header, which is the opposite of what a stub should be.
+  // The real HalStorage also declares the String overloads. Arduino's String has
+  // no implicit conversion to std::string, so without these the stub would accept
+  // a String argument the real header would reject - the stub must not be more
+  // permissive than the thing it stands in for.
   bool openFileForWrite(const char* moduleName, const String& path, HalFile& file) {
     return openFileForWrite(moduleName, path.c_str(), file);
   }
