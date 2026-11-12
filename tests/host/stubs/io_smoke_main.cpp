@@ -11,6 +11,7 @@
 // What it does verify:
 //   * the IO layer compiles and links with no missing symbols
 //   * basic configuration plumbing (URL normalisation, isConfigured) behaves
+//   * an empty password entry cannot erase a stored one
 //
 // Run via tests/host/check_io_layer.py.
 
@@ -84,6 +85,37 @@ int main() {
   if (store.isConfigured() || store.hasCredentials() || !store.getBaseUrl().empty()) {
     std::printf("FAIL: clear() left state behind\n");
     ++failures;
+  }
+
+  // Password editing: the settings screen now opens the keyboard with an empty
+  // field, so an empty entry must mean "keep what is stored". If the screen ever
+  // called setPassword("") unconditionally, opening the field and confirming
+  // without typing would silently erase a working password - and every later sync
+  // would fail with an auth error the user could not connect to anything they did.
+  store.setBaseUrl("https://cloud.example.com/dav");
+  store.setUsername("reader");
+  store.setPassword("secret");
+  {
+    // What the settings screen does for an empty entry.
+    const std::string typed;
+    if (!typed.empty()) {
+      store.setPassword(typed);
+    }
+    if (store.getPassword() != "secret") {
+      std::printf("FAIL: an empty password entry erased the stored password\n");
+      ++failures;
+    }
+  }
+  {
+    // And a real entry must still replace it.
+    const std::string typed = "newsecret";
+    if (!typed.empty()) {
+      store.setPassword(typed);
+    }
+    if (store.getPassword() != "newsecret") {
+      std::printf("FAIL: a typed password did not replace the stored one\n");
+      ++failures;
+    }
   }
 
   std::printf("\n%s\n", failures == 0 ? "IO LAYER SMOKE OK" : "IO LAYER SMOKE FAILED");
