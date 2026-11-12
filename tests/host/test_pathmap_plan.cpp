@@ -48,6 +48,15 @@ void testLocalPaths() {
   ANX_CHECK(PathMap::localTempBookPath("abc.epub", path));
   ANX_CHECK_EQ_STR("/Books/.abc.epub.part", path);
 
+  // The backup name holds the previous copy while a replacement lands. Its whole
+  // point is that it is NOT a book name: if it were, scanLocalBooks() would list
+  // it and the next sync would try to re-download a book that only exists as a
+  // leftover. Asserting both halves stops a future suffix change from quietly
+  // turning the backup into a phantom book.
+  ANX_CHECK(PathMap::localBackupBookPath("abc.epub", path));
+  ANX_CHECK_EQ_STR("/Books/.abc.epub.old", path);
+  ANX_CHECK(!PathMap::isAcceptableBookName(".abc.epub.old"));
+
   ANX_CHECK(!PathMap::localBookPath("../evil.epub", path));
   ANX_CHECK(!PathMap::localTempBookPath("book.pdf", path));
 
