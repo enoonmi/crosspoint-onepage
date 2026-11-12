@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -13,13 +16,13 @@
  * re-enter.
  *
  * Rows:
- *   Server URL   -> AnxCredentialStore::setBaseUrl (normalises trailing slash and
+ *   WebDAV URL   -> AnxCredentialStore::setBaseUrl (normalises trailing slash and
  *                   a pasted trailing /anx)
  *   Username
  *   Password
  *   Sync on Wi-Fi only     toggle
- *   Sync on wake          toggle
- *   Sync now              opens AnxSyncActivity
+ *   Sync when waking       toggle
+ *   Sync now               opens AnxSyncActivity
  */
 class AnxSyncSettingsActivity final : public Activity {
  public:
@@ -37,8 +40,6 @@ class AnxSyncSettingsActivity final : public Activity {
   size_t selectedIndex = 0;
   bool showSaved = false;
   bool showSaveError = false;
-
-  static constexpr int kMenuItemCount = 6;
 
   void handleSelection();
   void save();
