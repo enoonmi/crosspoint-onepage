@@ -26,7 +26,7 @@
 
 namespace {
 
-/** Walk /Books and collect the book names already present on the SD card. */
+/** Walk /Books and collect the books already on the SD card, with metadata. */
 std::vector<anx::LocalFile> scanLocalBooks() {
   std::vector<anx::LocalFile> out;
   if (!Storage.ready()) return out;
@@ -39,11 +39,25 @@ std::vector<anx::LocalFile> scanLocalBooks() {
 
     anx::LocalFile file;
     file.name = asStd;
-    // Listing does not expose size/mtime, and re-statting every book on every
-    // sync is expensive on SPI. Leaving both at 0 makes the planner compare by
-    // presence only: a book that exists is not re-downloaded. A book whose
-    // content changed is handled by the reader's own cache invalidation, which
-    // keys on file content anyway.
+
+    // The size has to be real. buildSyncPlan() guards both Replace conditions on
+    // `present.size > 0`, so a zeroed size means a book whose remote copy changed
+    // is planned as Skip forever and the device keeps serving the stale file.
+    // Opening a handle and asking for fileSize() reads the directory entry, not
+    // the file contents - the cost the earlier comment worried about was
+    // re-reading books, which this does not do.
+    std::string path;
+    if (anx::PathMap::localBookPath(asStd, path)) {
+      HalFile handle;
+      if (Storage.openFileForRead("AnxSync", path, handle)) {
+        file.size = static_cast<int64_t>(handle.fileSize());
+        handle.close();
+      }
+    }
+
+    // lastModified stays 0: HalFile exposes no mtime, and the size comparison
+    // above is what catches a re-imported book. Leaving it 0 is safe because the
+    // planner only treats a timestamp as meaningful when both sides are > 0.
     out.push_back(file);
   }
   return out;
