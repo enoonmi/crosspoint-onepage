@@ -363,13 +363,44 @@ AnxWebDavClient::Error AnxWebDavClient::downloadBook(const std::string& name, Pr
 
   if (result == OK) {
     // Replace any existing copy only once the new one is complete and verified.
-    if (Storage.exists(localPath.c_str())) {
-      Storage.remove(localPath.c_str());
+    //
+    // The old file is moved aside rather than deleted first: SdFat's rename does
+    // not overwrite, so something has to make room, but a remove-then-rename has
+    // a window where a failure loses the book entirely - the copy is gone and the
+    // new one was never put in place. Keeping it at the backup name leaves a way
+    // back, and the backup is only dropped after the rename succeeded.
+    std::string backupPath;
+    const bool haveBackupPath = anx::PathMap::localBackupBookPath(name, backupPath);
+    bool hadPrevious = false;
+
+    if (haveBackupPath && Storage.exists(localPath.c_str())) {
+      if (Storage.exists(backupPath.c_str())) {
+        Storage.remove(backupPath.c_str());  // stale backup from an earlier run
+      }
+      hadPrevious = Storage.rename(localPath.c_str(), backupPath.c_str());
+      if (!hadPrevious) {
+        // Could not move it aside; fall back to removing so the new copy can land
+        // rather than abandoning the download entirely.
+        LOG_ERR("AnxSync", "could not move %s aside, removing instead", localPath.c_str());
+        Storage.remove(localPath.c_str());
+      }
     }
+
     if (!Storage.rename(tempPath.c_str(), localPath.c_str())) {
       LOG_ERR("AnxSync", "rename %s -> %s failed", tempPath.c_str(), localPath.c_str());
       Storage.remove(tempPath.c_str());
+      // Put the previous copy back so the user still has the older book rather
+      // than nothing.
+      if (hadPrevious && Storage.exists(backupPath.c_str())) {
+        if (!Storage.rename(backupPath.c_str(), localPath.c_str())) {
+          LOG_ERR("AnxSync", "restore of %s from backup failed", localPath.c_str());
+        } else {
+          LOG_ERR("AnxSync", "restored the previous copy of %s", localPath.c_str());
+        }
+      }
       result = STORAGE_ERROR;
+    } else if (hadPrevious) {
+      Storage.remove(backupPath.c_str());
     }
   } else {
     Storage.remove(tempPath.c_str());
