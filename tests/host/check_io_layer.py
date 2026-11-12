@@ -51,6 +51,13 @@ def main() -> int:
         print("ERROR: no sources in lib/AnxSyncIo", file=sys.stderr)
         return 1
 
+    # Compile and link in two steps.
+    #
+    # A single `cl /Fo:"<dir>\" a.cpp b.cpp` does not work: the trailing
+    # backslash before the closing quote escapes the quote, so the shell swallows
+    # the rest of the command line as part of the /Fo value. MSVC then reports
+    # "D8003: missing source filename". Compiling with /c and linking afterwards
+    # sidesteps it entirely, and also works from a clean tree.
     quoted = [f'"{p}"' for p in (io_sources + logic_sources + stub_sources)]
 
     bat = build_dir / "check_io_layer.bat"
@@ -61,11 +68,13 @@ def main() -> int:
         f'call "{vcvars}" >nul 2>&1',
         f'cd /d "{build_dir}"',
         # /W4 for real warnings; /WX off so a warning does not masquerade as failure.
-        f'cl /nologo /utf-8 /std:c++20 /EHsc /W4 /WX- /I"{stub_dir}" /I"{logic_dir}" /I"{io_dir}" '
-        f'/Fo:"{build_dir}\\" /Fe:"{build_dir}\\anx_io_check.exe" ' + " ".join(quoted),
-        "echo BUILD_EXIT=%ERRORLEVEL%",
-        f'if not exist "{build_dir}\\anx_io_check.exe" ( echo NO_EXE & exit /b 1 )',
-        f'"{build_dir}\\anx_io_check.exe"',
+        f'cl /nologo /utf-8 /std:c++20 /EHsc /W4 /WX- /c '
+        f'/I"{stub_dir}" /I"{logic_dir}" /I"{io_dir}" ' + " ".join(quoted),
+        "echo COMPILE_EXIT=%ERRORLEVEL%",
+        "link /nologo /OUT:anx_io_check.exe *.obj",
+        "echo LINK_EXIT=%ERRORLEVEL%",
+        'if not exist "anx_io_check.exe" ( echo NO_EXE & exit /b 1 )',
+        "anx_io_check.exe",
         "echo RUN_EXIT=%ERRORLEVEL%",
     ]
     bat.write_text("\r\n".join(lines) + "\r\n", encoding="ascii")
@@ -76,7 +85,12 @@ def main() -> int:
     output = (completed.stdout or "") + (completed.stderr or "")
     print(output)
 
-    ok = "BUILD_EXIT=0" in output and "error C" not in output and "RUN_EXIT=0" in output
+    ok = (
+        "COMPILE_EXIT=0" in output
+        and "LINK_EXIT=0" in output
+        and "error C" not in output
+        and "RUN_EXIT=0" in output
+    )
     if ok:
         print("RESULT: AnxSyncIo compiles, links and passes the config smoke test.")
         print("        This proves it parses, type-checks and links, and that URL")
