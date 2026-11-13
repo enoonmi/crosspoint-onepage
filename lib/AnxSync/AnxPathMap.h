@@ -68,6 +68,27 @@ class PathMap {
    */
   static bool localBackupBookPath(const std::string& name, std::string& out);
 
+  /** Root of the reader's per-book cache directories. */
+  static const char* cacheDir();
+
+  /**
+   * The reader's cache directory for a book: `<cacheDir>/epub_<hash>`.
+   *
+   * This must produce exactly the string Epub's constructor builds, because it is
+   * the only way to find a book's `progress.bin`: the file stores a position, not
+   * a book name, so the mapping exists only in that hash. If the two ever diverge,
+   * every scan finds nothing and both progress directions stop working - silently,
+   * because "no progress.bin" is a normal state.
+   *
+   * Kept here rather than inlined so the call sites (scan, apply, and tests)
+   * cannot drift, and so the contract is testable without an SD card.
+   *
+   * Note that std::hash is not portable between standard libraries, and does not
+   * need to be: the device writes and reads the directory through the same
+   * binary. What matters is that the writer and this reader agree.
+   */
+  static std::string readerCachePathFor(const std::string& bookPath);
+
   /**
    * Strip a leading WebDAV base URL (scheme://host/prefix) from an href.
    *
