@@ -1,3 +1,4 @@
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -213,6 +214,52 @@ void testPlanIgnoresUnsafeRemoteNames() {
   anxtest::endSuite("SyncPlan: unsafe remote names are ignored");
 }
 
+// The reader's cache-path contract.
+//
+// progress.bin stores a position, not a book name, so the ONLY way to know which
+// book a given progress.bin belongs to is to rebuild the directory name the reader
+// used. If PathMap::readerCachePathFor() ever stops matching Epub's constructor,
+// every progress scan finds nothing - and "no progress.bin" is a normal state, so
+// there is no error to notice. Both progress directions would simply stop working.
+//
+// This locks the formula. It cannot compare against the real Epub (that class is
+// not host-buildable), so it rebuilds the same expression here and compares.
+void testReaderCachePath() {
+  anxtest::beginSuite("PathMap: reader cache path");
+
+  ANX_CHECK_EQ_STR("/.crosspoint", PathMap::cacheDir());
+
+  // Independently rebuild the string the way Epub's constructor does, and compare.
+  //
+  // This is the assertion that actually protects the contract. Checking only the
+  // prefix and uniqueness was not enough: injecting `hash + 1` into the
+  // implementation kept every one of those checks passing, because the shape was
+  // unchanged and the mapping was still one-to-one. Recomputing here means any
+  // drift in the formula fails, even though the hash VALUE is unknowable in
+  // advance (std::hash is unspecified across standard libraries).
+  const std::string bookPath = "/Books/abc.epub";
+  const std::string expected = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
+  ANX_CHECK_EQ_STR(expected, PathMap::readerCachePathFor(bookPath));
+
+  // Same input, same output - twice, so a stateful implementation is caught.
+  ANX_CHECK_EQ_STR(PathMap::readerCachePathFor("/Books/abc.epub"),
+                   PathMap::readerCachePathFor("/Books/abc.epub"));
+
+  // Two different books must not share a cache directory, or their positions
+  // would overwrite each other.
+  ANX_CHECK_MSG(PathMap::readerCachePathFor("/Books/abc.epub") !=
+                    PathMap::readerCachePathFor("/Books/xyz.epub"),
+                "different books must map to different cache directories");
+
+  // And the directory matters too, not just the file name: two books with the
+  // same name in different folders are different books.
+  ANX_CHECK_MSG(PathMap::readerCachePathFor("/Books/abc.epub") !=
+                    PathMap::readerCachePathFor("/Other/abc.epub"),
+                "the same name under a different directory is a different book");
+
+  anxtest::endSuite("PathMap: reader cache path");
+}
+
 }  // namespace
 
 void runPathAndPlanTests() {
@@ -225,4 +272,5 @@ void runPathAndPlanTests() {
   testPlanWithoutRemoteTimestamps();
   testPlanEmptyAndNoWork();
   testPlanIgnoresUnsafeRemoteNames();
+  testReaderCachePath();
 }
