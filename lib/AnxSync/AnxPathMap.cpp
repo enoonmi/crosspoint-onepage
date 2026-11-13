@@ -1,6 +1,8 @@
 #include "AnxPathMap.h"
 
 #include <cctype>
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace anx {
@@ -82,6 +84,17 @@ bool PathMap::localBackupBookPath(const std::string& name, std::string& out) {
   if (!isAcceptableBookName(name)) return false;
   out = std::string(booksDir()) + "/." + name + ".old";
   return true;
+}
+
+const char* PathMap::cacheDir() { return "/.crosspoint"; }
+
+std::string PathMap::readerCachePathFor(const std::string& bookPath) {
+  // Byte-for-byte the expression in Epub's constructor:
+  //   cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(filepath));
+  // Any difference here and the scan looks in a directory that does not exist,
+  // which reads as "this book was never opened" rather than as an error.
+  return std::string(cacheDir()) + "/epub_" +
+         std::to_string(std::hash<std::string>{}(bookPath));
 }
 
 std::string PathMap::stripBaseUrl(const std::string& href) {
