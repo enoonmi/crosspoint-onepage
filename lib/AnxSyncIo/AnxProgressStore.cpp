@@ -27,6 +27,10 @@
 //   applyPhonePositions()  phone document -> progress.bin
 // Both need Epub for the cumulative spine sizes; progress.bin stores a position,
 // not a percentage, so the translation cannot be done without them.
+//
+// The per-book cache directory name comes from PathMap::readerCachePathFor(), which
+// mirrors Epub's constructor. Keeping that in one place matters: a mismatch reads
+// as "this book was never opened" rather than as an error.
 
 namespace {
 
@@ -260,12 +264,9 @@ bool AnxProgressStore::load() {
 int AnxProgressStore::scanReaderPositions(int64_t now) {
   if (!Storage.ready()) return 0;
 
-  // The cache directory the reader uses. Epub builds its per-book path as
-  // cacheDir + "/epub_" + std::hash<std::string>{}(filepath), so the mapping from
-  // a book to its progress.bin exists only in that hash. Rebuilding it here with
-  // the same expression is what makes the progress direction work at all: nothing
-  // in progress.bin says which book it belongs to.
-  static constexpr const char* kCacheDir = "/.crosspoint";
+  // PathMap::cacheDir() rather than a local literal: the reader's cache root and
+  // the sync's view of it must not drift.
+  const char* kCacheDir = anx::PathMap::cacheDir();
 
   const auto names = Storage.listFiles(anx::PathMap::booksDir(), 500);
   int changed = 0;
@@ -277,8 +278,7 @@ int AnxProgressStore::scanReaderPositions(int64_t now) {
     std::string bookPath;
     if (!anx::PathMap::localBookPath(bookName, bookPath)) continue;
 
-    const std::string cachePath =
-        std::string(kCacheDir) + "/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
+    const std::string cachePath = anx::PathMap::readerCachePathFor(bookPath);
 
     int spineIndex = 0;
     int pageNumber = 0;
@@ -365,7 +365,7 @@ int AnxProgressStore::applyPhonePositions(const anx::ProgressDocument& phone) {
   if (!Storage.ready()) return 0;
   if (phone.books.empty()) return 0;
 
-  static constexpr const char* kCacheDir = "/.crosspoint";
+  const char* kCacheDir = anx::PathMap::cacheDir();
   int rewritten = 0;
 
   for (const anx::BookProgress& entry : phone.books) {
@@ -381,8 +381,7 @@ int AnxProgressStore::applyPhonePositions(const anx::ProgressDocument& phone) {
     if (!anx::PathMap::localBookPath(bookName, bookPath)) continue;
     if (!Storage.exists(bookPath.c_str())) continue;  // book not on this device
 
-    const std::string cachePath =
-        std::string(kCacheDir) + "/epub_" + std::to_string(std::hash<std::string>{}(bookPath));
+    const std::string cachePath = anx::PathMap::readerCachePathFor(bookPath);
 
     // The spine table is needed to turn a book-wide percentage back into a
     // (spine, page) pair, exactly as scanReaderPositions() needs it the other way.
